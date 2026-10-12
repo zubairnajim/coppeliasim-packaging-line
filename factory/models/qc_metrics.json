@@ -1,0 +1,33 @@
+{
+  "train_images": 1920,
+  "val_images": 384,
+  "test_images": 576,
+  "train_accuracy": 1.0,
+  "val_accuracy": 1.0,
+  "test_accuracy": 1.0,
+  "best_epoch": 50,
+  "classes": [
+    "good",
+    "rework",
+    "scrap"
+  ],
+  "test_confusion_rows_true_cols_pred": [
+    [
+      192,
+      0,
+      0
+    ],
+    [
+      0,
+      192,
+      0
+    ],
+    [
+      0,
+      0,
+      192
+    ]
+  ],
+  "device": "cuda",
+  "epochs": 50
+}

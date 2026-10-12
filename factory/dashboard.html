@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packaging line 1 - operator dashboard</title>
+<script>
+  // theme: ?theme=dark|light  >  saved choice  >  dark (control-room default)
+  (function () {
+    var q = new URLSearchParams(location.search).get('theme');
+    var t = q || localStorage.getItem('hmi-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+  })();
+</script>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --raised: #f1f0ec;
+    --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11, 11, 11, .10);
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;                 /* categorical slots 1-3 */
+    --good: #0ca30c; --warn: #fab219; --serious: #ec835a; --crit: #d03b3b;   /* status, never a series */
+    --track: #cde2fb; --fill: #2a78d6;
+    --equip: #ebeae5; --belt: #dcdbd4; --part: #fcfcfb;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --raised: #242422;
+    --ink: #ffffff; --ink2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, .10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --track: #184f95; --fill: #3987e5;
+    --equip: #232321; --belt: #2e2e2b; --part: #1a1a19;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1, h2, h3, p { margin: 0; }
+  button { font: inherit; color: inherit; }
+
+  /* ---------- top bar ---------- */
+  .bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+         padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .brand h1 { font-size: 17px; font-weight: 650; letter-spacing: .01em; }
+  .brand span { font-size: 12px; color: var(--muted); }
+  .state { display: flex; align-items: center; gap: 10px; padding: 6px 14px; border: 1px solid var(--border);
+           border-radius: 8px; background: var(--raised); min-width: 210px; }
+  .state svg { width: 22px; height: 22px; flex: none; }
+  .state b { font-size: 16px; letter-spacing: .04em; }
+  .state small { display: block; font-size: 11px; color: var(--muted); }
+  .clock span { display: block; font-size: 11px; color: var(--muted); }
+  .clock b { font-size: 18px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .cmds { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--axis); background: var(--surface);
+         font-weight: 600; cursor: pointer; min-width: 84px; }
+  .btn:hover:not(:disabled) { background: var(--raised); }
+  .btn:disabled { opacity: .35; cursor: default; }
+  .btn.primary { background: var(--s1); border-color: var(--s1); color: #fff; }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--s1); }
+  .btn.estop { background: var(--crit); border-color: var(--crit); color: #fff; min-width: 110px; }
+  .btn.estop:hover:not(:disabled) { filter: brightness(1.1); background: var(--crit); }
+  .btn.small { padding: 5px 10px; min-width: 0; font-weight: 500; font-size: 12px; }
+  .btn:focus-visible, .seg button:focus-visible, input:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+
+  /* ---------- layout ---------- */
+  main { padding: 16px 20px 28px; display: grid; gap: 14px; grid-template-columns: repeat(12, minmax(0, 1fr)); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  .card > header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  .card h2 { font-size: 13px; font-weight: 650; }
+  .card header .sub { font-size: 12px; color: var(--muted); }
+  .card header .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .kpis { grid-column: 1 / -1; display: grid; gap: 14px; grid-template-columns: repeat(9, minmax(0, 1fr)); }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  .tile.hero { grid-column: span 2; }
+  .tile .label { font-size: 12px; color: var(--ink2); }
+  .tile .value { font-size: 28px; font-weight: 600; line-height: 1.15; margin-top: 2px; }
+  .tile.hero .value { font-size: 52px; line-height: 1.05; }
+  .tile .value small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 3px; }
+  .tile .note { font-size: 12px; color: var(--muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meter { height: 8px; border-radius: 4px; background: var(--track); margin-top: 8px; overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; background: var(--fill); border-radius: 4px; transition: width .3s; }
+  .span8 { grid-column: span 8; } .span6 { grid-column: span 6; } .span4 { grid-column: span 4; }
+  @media (max-width: 1250px) {
+    .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .span8, .span6, .span4 { grid-column: 1 / -1; }
+  }
+
+  /* ---------- status vocabulary: glyph + label, colour never alone ---------- */
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .chip svg { width: 12px; height: 12px; flex: none; }
+  .g-good { fill: var(--good); } .g-rework { fill: var(--warn); } .g-scrap { fill: var(--crit); }
+  .g-none { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+  .g-active { fill: var(--good); } .g-idle { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+  .g-hold { fill: var(--warn); } .g-blocked { fill: var(--serious); }
+
+  /* ---------- line overview (mimic diagram) ---------- */
+  #mimic { width: 100%; height: auto; display: block; }
+  #mimic .lane { fill: none; stroke: var(--grid); stroke-width: 1; }
+  #mimic .belt { fill: var(--belt); }
+  #mimic .equip { fill: var(--equip); stroke: var(--axis); stroke-width: 1; }
+  #mimic .frame { fill: none; stroke: var(--axis); stroke-width: 1; }
+  #mimic .reach { fill: none; stroke: var(--grid); stroke-width: 1; }
+  #mimic .base { fill: var(--equip); stroke: var(--ink2); stroke-width: 1.5; }
+  #mimic .arm { stroke: var(--ink2); stroke-width: 3; stroke-linecap: round; fill: none; }
+  #mimic .tcp { fill: var(--ink); stroke: var(--surface); stroke-width: 2; }
+  #mimic .part { fill: var(--part); stroke: var(--ink2); stroke-width: 1.2; }
+  #mimic .pip { fill: var(--ink2); }
+  #mimic .amr { fill: var(--equip); stroke: var(--ink2); stroke-width: 1.5; }
+  #mimic .name { font-size: 11px; fill: var(--ink2); font-weight: 600; }
+  #mimic .st { font-size: 10.5px; fill: var(--muted); }
+  #mimic .cnt { font-size: 10.5px; fill: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  #mimic .flow { fill: var(--muted); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--ink2); margin-top: 8px; }
+  .legend .chip { font-weight: 500; }
+
+  /* ---------- vision ---------- */
+  .scanbig { display: flex; gap: 14px; align-items: flex-start; }
+  .scanbig img { width: 168px; height: 168px; border-radius: 8px; background: var(--raised); border: 1px solid var(--border); object-fit: cover; flex: none; }
+  .scanmeta { min-width: 0; flex: 1; }
+  .scanmeta .verdict { font-size: 22px; font-weight: 650; display: flex; align-items: center; gap: 8px; }
+  .scanmeta .verdict svg { width: 18px; height: 18px; }
+  .scanmeta dl { margin: 8px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 12px; }
+  .scanmeta dt { color: var(--muted); } .scanmeta dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .flag { margin-top: 8px; font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--raised); display: none; }
+  .thumbs { margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 6px; align-content: start;
+            grid-auto-rows: max-content; flex: 1 1 232px; min-height: 160px; overflow-y: auto; }
+  .card.col { display: flex; flex-direction: column; }
+  .thumb { padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--raised); cursor: pointer; overflow: hidden; text-align: left; }
+  .thumb img { width: 100%; aspect-ratio: 1; display: block; object-fit: cover; }
+  .thumb span { display: flex; align-items: center; gap: 4px; padding: 2px 5px; font-size: 10.5px; color: var(--ink2); font-variant-numeric: tabular-nums; }
+  .thumb span svg { width: 9px; height: 9px; flex: none; }
+  .thumb[aria-pressed="true"] { outline: 2px solid var(--s1); outline-offset: 1px; }
+  .thumb.misread { border-color: var(--crit); }
+  .empty { color: var(--muted); font-size: 12px; padding: 18px 0; }
+  .seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 7px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; padding: 4px 10px; font-size: 12px; cursor: pointer; color: var(--ink2); }
+  .seg button + button { border-left: 1px solid var(--axis); }
+  .seg button[aria-pressed="true"] { background: var(--raised); color: var(--ink); font-weight: 650; }
+  .seg button:disabled { opacity: .4; cursor: default; }
+
+  /* ---------- live view ---------- */
+  #live { width: 100%; aspect-ratio: 16 / 10; border-radius: 8px; background: var(--raised); display: block; object-fit: cover; }
+
+  /* ---------- trend ---------- */
+  .plot { position: relative; }
+  .plot svg { display: block; width: 100%; }
+  .plot .gridline { stroke: var(--grid); stroke-width: 1; }
+  .plot .axisline { stroke: var(--axis); stroke-width: 1; }
+  .plot text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .plot text.dl { fill: var(--ink2); font-size: 11.5px; }
+  .plot .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .plot .cross { stroke: var(--axis); stroke-width: 1; }
+  .tip { position: absolute; pointer-events: none; background: var(--raised); border: 1px solid var(--border); border-radius: 8px;
+         padding: 8px 10px; font-size: 12px; min-width: 128px; display: none; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+  .tip .when { color: var(--muted); margin-bottom: 4px; }
+  .tip .row { display: flex; align-items: center; gap: 8px; }
+  .tip .row i { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+  .tip .row b { font-variant-numeric: tabular-nums; min-width: 28px; }
+  .tip .row span { color: var(--ink2); }
+  .keys { display: flex; gap: 14px; font-size: 12px; color: var(--ink2); margin-bottom: 6px; flex-wrap: wrap; }
+  .keys span { display: inline-flex; align-items: center; gap: 6px; }
+  .keys i { width: 14px; height: 2px; border-radius: 1px; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.data th { text-align: right; color: var(--muted); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--axis); }
+  table.data td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  table.data th:first-child, table.data td:first-child { text-align: left; }
+
+  /* ---------- controls ---------- */
+  .ctl { display: grid; grid-template-columns: 132px 1fr 62px; align-items: center; gap: 8px 10px; font-size: 12.5px; }
+  .ctl label { color: var(--ink2); }
+  .ctl output { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .ctl input[type=range] { width: 100%; accent-color: var(--s1); }
+  .ctl .wide { grid-column: 2 / 4; }
+  .hint { font-size: 11.5px; color: var(--muted); margin-top: 10px; }
+  table.stations { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.stations th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 6px; border-bottom: 1px solid var(--axis); font-size: 12px; }
+  table.stations td { padding: 6px; border-bottom: 1px solid var(--grid); }
+  table.stations td.role { color: var(--muted); }
+  .switch { position: relative; width: 36px; height: 20px; display: inline-block; }
+  .switch input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; cursor: pointer; z-index: 1; }
+  .switch i { position: absolute; inset: 0; border-radius: 10px; background: var(--axis); transition: background .15s; }
+  .switch i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); transition: transform .15s; }
+  .switch input:checked + i { background: var(--warn); }
+  .switch input:checked + i::after { transform: translateX(16px); }
+  .switch input:focus-visible + i { outline: 2px solid var(--s1); outline-offset: 2px; }
+
+  /* ---------- events ---------- */
+  #events { list-style: none; margin: 0; padding: 0; max-height: 262px; overflow-y: auto; font-size: 12.5px; }
+  #events li { display: grid; grid-template-columns: 54px 16px 1fr; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--grid); align-items: start; }
+  #events time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  #events svg { width: 12px; height: 12px; margin-top: 3px; }
+  #fault { display: none; grid-column: 1 / -1; white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">
+    <h1>Packaging line 1</h1>
+    <span>Soap bars: inspect, pack, palletize, ship &middot; CoppeliaSim digital twin</span>
+  </div>
+  <div class="state" id="state" role="status" aria-live="polite">
+    <svg viewBox="0 0 22 22" id="stateIcon"></svg>
+    <div><b id="stateLabel">CONNECTING</b><small id="stateSub">waiting for the controller</small></div>
+  </div>
+  <div class="clock"><span>Simulated time</span><b id="clock">00:00</b></div>
+  <div class="clock"><span>Speed</span>
+    <div class="seg" id="speed" role="group" aria-label="Simulation speed">
+      <button data-v="0.5">0.5x</button><button data-v="1">1x</button><button data-v="2">2x</button><button data-v="0">Max</button>
+    </div>
+  </div>
+  <div class="cmds">
+    <button class="btn primary" id="bStart">Start</button>
+    <button class="btn" id="bHold">Hold</button>
+    <button class="btn" id="bStop">Stop</button>
+    <button class="btn estop" id="bEstop">E-STOP</button>
+    <button class="btn small" id="bTheme" title="Switch between dark and light">Theme</button>
+  </div>
+</header>
+
+<main>
+  <pre class="card" id="fault"></pre>
+
+  <section class="kpis" aria-label="Key figures">
+    <div class="tile hero"><div class="label">Bars packed</div><div class="value" id="kPacked">0</div><div class="note" id="kPackedNote">line not started</div></div>
+    <div class="tile"><div class="label">Unpacked on the line</div><div class="value" id="kWip">0</div><div class="note" id="kWipNote">bars on conveyor A</div></div>
+    <div class="tile"><div class="label">Rejected</div><div class="value" id="kRej">0</div><div class="note" id="kRejNote">rework 0 &middot; scrap 0</div></div>
+    <div class="tile"><div class="label">Cartons filled</div><div class="value" id="kCart">0</div><div class="note" id="kCartNote">0 on conveyor B</div></div>
+    <div class="tile"><div class="label">Pallets built</div><div class="value" id="kPal">0</div>
+      <div class="meter" title="Cartons on the pallet being built"><i id="kPalBar"></i></div><div class="note" id="kPalNote">no pallet at the station</div></div>
+    <div class="tile"><div class="label">Pallets shipped</div><div class="value" id="kShip">0</div><div class="note" id="kShipNote">AMR docked</div></div>
+    <div class="tile"><div class="label">Throughput</div><div class="value" id="kRate">0<small>bars/min</small></div><div class="note" id="kRateNote">packed, last 60 s</div></div>
+    <div class="tile"><div class="label">Inspection accuracy</div><div class="value" id="kAcc">&ndash;</div><div class="note" id="kAccNote">vs simulation ground truth</div></div>
+  </section>
+
+  <article class="card span8">
+    <header><h2>Line overview</h2><span class="sub">top view, live positions</span></header>
+    <svg id="mimic" role="img" aria-label="Top view of the line with live part and robot positions"></svg>
+    <div class="legend" id="mimicLegend"></div>
+  </article>
+
+  <article class="card span4 col">
+    <header><h2>Vision inspection</h2><span class="sub" id="scanSub">camera scans</span>
+      <div class="right"><div class="seg" id="scanFilter" role="group" aria-label="Scan filter">
+        <button data-v="all" aria-pressed="true">All</button><button data-v="defects">Defects</button><button data-v="misreads">Misreads</button></div></div>
+    </header>
+    <div class="scanbig">
+      <img id="scanImg" alt="Selected scan" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
+      <div class="scanmeta">
+        <div class="verdict" id="scanVerdict"><span style="color:var(--muted);font-size:14px;font-weight:500">No scans yet</span></div>
+        <dl id="scanFacts"></dl>
+        <div class="flag" id="scanFlag"></div>
+        <button class="btn small" id="scanLive" style="margin-top:8px;display:none">Back to latest</button>
+      </div>
+    </div>
+    <div class="thumbs" id="thumbs"></div>
+  </article>
+
+  <article class="card span4">
+    <header><h2>Live camera</h2>
+      <div class="right"><div class="seg" id="viewSel" role="group" aria-label="Camera"></div></div></header>
+    <img id="live" alt="Live view from the selected scene camera">
+  </article>
+
+  <article class="card span4">
+    <header><h2>Flow rate</h2><span class="sub">bars per minute, 60 s rolling</span>
+      <div class="right"><button class="btn small" id="trendToggle" aria-pressed="false">Table</button></div></header>
+    <div class="keys" id="trendKeys"></div>
+    <div class="plot" id="trend"><svg id="trendSvg" height="230"></svg><div class="tip" id="trendTip"></div></div>
+    <div id="trendTable" style="display:none;max-height:262px;overflow:auto"></div>
+  </article>
+
+  <article class="card span4">
+    <header><h2>Setpoints</h2><span class="sub">applied live</span>
+      <div class="right"><button class="btn small" id="bReset">Reset counters</button></div></header>
+    <div class="ctl" id="ctl">
+      <label for="c_feed_rate">Feed rate</label><input type="range" id="c_feed_rate" data-k="feed_rate" min="10" max="70" step="1"><output id="o_feed_rate"></output>
+      <label for="c_belt_speed">Conveyor A speed</label><input type="range" id="c_belt_speed" data-k="belt_speed" min="0.08" max="0.20" step="0.01"><output id="o_belt_speed"></output>
+      <label for="c_rework_pct">Rework share</label><input type="range" id="c_rework_pct" data-k="rework_pct" min="0" max="30" step="1"><output id="o_rework_pct"></output>
+      <label for="c_scrap_pct">Scrap share</label><input type="range" id="c_scrap_pct" data-k="scrap_pct" min="0" max="30" step="1"><output id="o_scrap_pct"></output>
+      <label>Pallet layers</label><div class="wide"><div class="seg" id="segLayers" role="group" aria-label="Pallet layers">
+        <button data-v="1">1 (4 cartons)</button><button data-v="2">2 (8)</button><button data-v="3">3 (12)</button></div></div>
+      <label>Grading by</label><div class="wide"><div class="seg" id="segMode" role="group" aria-label="Grading source">
+        <button data-v="cnn">Neural network</button><button data-v="oracle">Ground truth</button></div></div>
+    </div>
+    <p class="hint" id="ctlHint">Rework and scrap shares describe the incoming supply. Pallet layers apply to the next empty pallet.</p>
+  </article>
+
+  <article class="card span6">
+    <header><h2>Stations</h2><span class="sub">a cycle stop lets the station finish its current cycle, then wait</span></header>
+    <table class="stations"><thead><tr><th>Station</th><th>Equipment</th><th>State</th><th>Cycle stop</th></tr></thead><tbody id="stations"></tbody></table>
+  </article>
+
+  <article class="card span6">
+    <header><h2>Event log</h2><span class="sub">newest first</span></header>
+    <ul id="events"><li><time></time><span></span><span class="empty" style="padding:0">No events yet</span></li></ul>
+  </article>
+</main>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const SVGNS = 'http://www.w3.org/2000/svg';
+let LAY = null, S = null, online = false;
+let pinned = null, scanFilter = 'all', view = 'overview', trendTable = false, stopArmed = 0, lastScanKey = '', lastEventId = -1;
+
+// ---------------------------------------------------------------- vocabulary
+const GRADE = { good: 'Good', rework: 'Rework', scrap: 'Scrap' };
+// one glyph per meaning so that state never rests on colour alone
+function glyph(kind) {
+  const shapes = {
+    good: '<circle cx="6" cy="6" r="5"/>', rework: '<path d="M6 1 11.5 11H.5Z"/>', scrap: '<rect x="1.5" y="1.5" width="9" height="9"/>',
+    none: '<circle cx="6" cy="6" r="4.2"/>',
+    active: '<circle cx="6" cy="6" r="5"/>', idle: '<circle cx="6" cy="6" r="4.2"/>',
+    hold: '<rect x="2" y="1.5" width="3" height="9"/><rect x="7" y="1.5" width="3" height="9"/>', blocked: '<path d="M6 1 11.5 11H.5Z"/>',
+    info: '<circle cx="6" cy="6" r="4.2" fill="none" stroke="var(--muted)" stroke-width="1.5"/>',
+    warn: '<path d="M6 1 11.5 11H.5Z" fill="var(--warn)"/>', alarm: '<rect x="1.5" y="1.5" width="9" height="9" fill="var(--crit)"/>',
+    ok: '<path d="M1.5 6.5 4.8 9.6 10.5 2.6" fill="none" stroke="var(--good)" stroke-width="2"/>',
+  };
+  return `<svg viewBox="0 0 12 12" class="g-${kind}" aria-hidden="true">${shapes[kind] || ''}</svg>`;
+}
+function stClass(s) {
+  if (!s) return 'idle';
+  if (s === 'HOLD') return 'hold';
+  if (s === 'BLOCKED') return 'blocked';
+  if (s === 'IDLE' || s === 'DOCKED' || s.startsWith('WAIT')) return 'idle';
+  return 'active';
+}
+const nice = s => s ? s.charAt(0) + s.slice(1).toLowerCase() : '';
+const fmt = n => Math.round(n).toLocaleString('en-US');
+function clock(t) {
+  t = Math.floor(t); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60;
+  return (h ? h + ':' : '') + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+function send(cmd, extra) {
+  return fetch('/api/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ cmd }, extra || {})) })
+    .then(() => setTimeout(poll, 60)).catch(() => {});
+}
+
+// ------------------------------------------------------------- line overview
+const K = 90, XMIN = -7.25, XMAX = 3.05, YMAX = 1.6, YMIN = -3.0;
+const X = x => +((x - XMIN) * K).toFixed(1), Y = y => +((YMAX - y) * K).toFixed(1);
+const STATION_ROWS = [
+  ['feeder', 'Feeder', 'Product hopper + conveyor A'], ['delta', 'Delta packer', 'ABB IRB 360'],
+  ['palletizer', 'Palletizer', 'UR10 cobot'], ['pallet_robot', 'Pallet robot', 'ABB IRB 4600'],
+  ['amr', 'AMR', 'KUKA Omnirob'], ['sorter', 'Reject sorter', 'Baxter + CNN'],
+];
+function box(x0, y0, x1, y1, cls, rx) {
+  return `<rect x="${X(Math.min(x0, x1))}" y="${Y(Math.max(y0, y1))}" width="${(Math.abs(x1 - x0) * K).toFixed(1)}" height="${(Math.abs(y1 - y0) * K).toFixed(1)}" rx="${rx || 2}" class="${cls}"/>`;
+}
+function tag(x, y, name, id, anchor) {
+  let s = `<text x="${X(x)}" y="${Y(y)}" class="name" text-anchor="${anchor || 'middle'}">${name}</text>`;
+  if (id) s += `<text x="${X(x)}" y="${Y(y) + 13}" class="st" id="ms_${id}" text-anchor="${anchor || 'middle'}"></text>`;
+  return s;
+}
+function arrow(x, y, dir) {
+  const px = X(x), py = Y(y), d = 5 * dir;
+  return `<path class="flow" d="M${px - d} ${py - 4} L${px + d} ${py} L${px - d} ${py + 4}Z"/>`;
+}
+function buildMimic() {
+  const L = LAY, hw = L.BELT_W / 2, svg = $('mimic');
+  svg.setAttribute('viewBox', `0 0 ${X(XMAX)} ${Y(YMIN)}`);
+  let s = '';
+  s += box(L.DOCK[0] - 0.75, L.DOCK[1] - 0.47, L.AMR_UNLOAD_X + 0.68, L.DOCK[1] + 0.47, 'lane', 6);
+  s += `<circle cx="${X(L.IRB_BASE[0])}" cy="${Y(L.IRB_BASE[1])}" r="${L.IRB_R * K}" class="reach"/>`;
+  s += box(L.A_X0, L.A_Y - hw, L.A_X1, L.A_Y + hw, 'belt') + box(L.B_X1, L.B_Y - hw, L.B_X0, L.B_Y + hw, 'belt');
+  s += box(L.SHIP_X0, L.DOCK[1] - 0.25, L.SHIP_X1, L.DOCK[1] + 0.25, 'belt');
+  for (const x of [-2.1, -0.75, 0.75]) s += arrow(x, L.A_Y, 1);
+  for (const x of [0.6, -0.6, -2.0]) s += arrow(x, L.B_Y, -1);
+  for (const x of [-0.5, 0.8]) s += arrow(x, L.DOCK[1], 1);
+  s += box(L.A_X0 - 0.42, L.A_Y - 0.22, L.A_X0 + 0.06, L.A_Y + 0.22, 'equip');
+  s += box(L.B_X0 - 0.12, L.B_Y - 0.22, L.B_X0 + 0.36, L.B_Y + 0.22, 'equip');
+  s += box(L.B_SEAL_X - 0.2, L.B_Y - 0.24, L.B_SEAL_X + 0.2, L.B_Y + 0.24, 'equip');
+  s += box(-0.72, -0.72, 0.72, 0.72, 'frame', 4);
+  for (const cx of [L.QC_X, L.A_END_X]) s += box(cx - 0.11, L.A_Y - 0.11, cx + 0.11, L.A_Y + 0.11, 'frame', 3);
+  s += box(L.STATION[0] - 0.2, L.STATION[1] - 0.25, L.STATION[0] + 0.2, L.STATION[1] + 0.25, 'equip');
+  s += box(L.STACK[0] - 0.25, L.STACK[1] - 0.2, L.STACK[0] + 0.25, L.STACK[1] + 0.2, 'equip');
+  for (const b of [L.BIN_REWORK, L.BIN_SCRAP]) s += box(b[0] - 0.15, b[1] - 0.15, b[0] + 0.15, b[1] + 0.15, 'equip');
+  s += `<circle cx="${X(L.UR_BASE[0])}" cy="${Y(L.UR_BASE[1])}" r="11" class="base"/>`;
+  s += `<circle cx="${X(L.IRB_BASE[0])}" cy="${Y(L.IRB_BASE[1])}" r="26" class="base"/>`;
+  s += `<circle cx="${X(L.BAXTER[0])}" cy="${Y(L.BAXTER[1])}" r="20" class="base"/>`;
+  s += '<g id="dyn"></g>';
+  s += tag(L.A_X0 - 0.18, L.A_Y + 0.62, 'Feeder', 'feeder');
+  s += tag(L.QC_X, L.A_Y + 0.62, 'QC camera');
+  s += tag(0, 1.12, 'Delta packer', 'delta');
+  s += tag(L.B_SEAL_X, L.B_Y - 0.47, 'Case sealer');
+  s += tag(L.B_X0 + 0.12, L.B_Y - 0.47, 'Carton erector');
+  s += tag(L.UR_BASE[0] + 0.1, L.UR_BASE[1] - 0.36, 'Palletizer', 'palletizer');
+  s += tag(L.STATION[0] + 0.05, L.STATION[1] + 0.58, 'Pallet station', 'station');
+  s += tag(L.IRB_BASE[0] - 0.45, L.IRB_BASE[1] - 0.52, 'Pallet robot', 'pallet_robot');
+  s += tag(L.STACK[0], L.STACK[1] + 0.42, 'Empty pallets');
+  s += tag(L.DOCK[0], L.DOCK[1] - 0.68, 'AMR', 'amr');
+  s += tag((L.SHIP_X0 + L.SHIP_X1) / 2, L.DOCK[1] - 0.5, 'Outbound conveyor to shipping');
+  s += tag(XMAX - 0.08, L.BAXTER[1] + 0.95, 'Reject sorter', 'sorter', 'end');
+  s += tag(L.BIN_REWORK[0] - 0.22, L.BIN_REWORK[1] + 0.04, 'Rework', null, 'end');
+  s += tag(L.BIN_SCRAP[0] + 0.22, L.BIN_SCRAP[1] - 0.04, 'Scrap', null, 'start');
+  svg.innerHTML = s;
+  $('mimicLegend').innerHTML =
+    ['good', 'rework', 'scrap'].map(g => `<span class="chip">${glyph(g)}${GRADE[g]} bar</span>`).join('') +
+    `<span class="chip">${glyph('none')}Not inspected yet</span>` +
+    `<span class="chip" style="margin-left:auto">${glyph('active')}Working</span><span class="chip">${glyph('idle')}Waiting</span>` +
+    `<span class="chip">${glyph('hold')}Cycle stop</span><span class="chip">${glyph('blocked')}Blocked</span>`;
+}
+function barMark(x, y, g) {
+  const px = X(x), py = Y(y);
+  if (g === 1) return `<circle cx="${px}" cy="${py}" r="3.6" class="g-good"/>`;
+  if (g === 2) return `<path d="M${px} ${py - 4.4} L${px + 4.4} ${py + 3.6} L${px - 4.4} ${py + 3.6}Z" class="g-rework"/>`;
+  if (g === 3) return `<rect x="${px - 3.4}" y="${py - 3.4}" width="6.8" height="6.8" class="g-scrap"/>`;
+  return `<circle cx="${px}" cy="${py}" r="3" class="g-none"/>`;
+}
+function palletMark(x, y, n, rot) {
+  const w = rot ? LAY.PALLET[1] : LAY.PALLET[0], h = rot ? LAY.PALLET[0] : LAY.PALLET[1];
+  return box(x - w / 2, y - h / 2, x + w / 2, y + h / 2, 'part') +
+    (n == null ? '' : `<text x="${X(x)}" y="${Y(y) + 3.5}" class="cnt" text-anchor="middle">${n}</text>`);
+}
+function drawMimic(c) {
+  const L = LAY; let s = '';
+  for (const k of c.cartons) {                       // carton with one pip per packed bar
+    const [x, n, sealed] = k, cw = L.CARTON[0], ch = L.CARTON[1];
+    s += box(x - cw / 2, L.B_Y - ch / 2, x + cw / 2, L.B_Y + ch / 2, 'part');
+    if (sealed) s += `<line x1="${X(x - cw / 2)}" y1="${Y(L.B_Y)}" x2="${X(x + cw / 2)}" y2="${Y(L.B_Y)}" stroke="var(--ink2)" stroke-width="1.2"/>`;
+    else for (let i = 0; i < n; i++) s += `<rect x="${X(x + L.SLOTS[i][0]) - 2.2}" y="${Y(L.B_Y + L.SLOTS[i][1]) - 1.8}" width="4.4" height="3.6" class="pip"/>`;
+  }
+  for (const b of c.bars) s += barMark(b[0], b[1], b[2]);
+  if (c.pallet) s += palletMark(L.STATION[0], L.STATION[1], c.pallet.count, false);
+  $('ms_station').textContent = c.pallet ? `${c.pallet.count} / ${c.pallet.cap} cartons` : 'no pallet';
+  s += `<text x="${X(L.STACK[0])}" y="${Y(L.STACK[1]) + 3.5}" class="cnt" text-anchor="middle">x${c.stack}</text>`;
+  s += box(c.amr.x - 0.61, L.DOCK[1] - 0.37, c.amr.x + 0.61, L.DOCK[1] + 0.37, 'amr', 8);
+  if (c.amr.load != null) s += palletMark(c.amr.x, L.DOCK[1], c.amr.load, true);
+  for (const p of c.shipping) s += palletMark(p[0], L.DOCK[1], p[1], true);
+  s += `<text x="${X(L.BIN_REWORK[0])}" y="${Y(L.BIN_REWORK[1]) + 3.5}" class="cnt" text-anchor="middle">${c.bins.rework}</text>`;
+  s += `<text x="${X(L.BIN_SCRAP[0])}" y="${Y(L.BIN_SCRAP[1]) + 3.5}" class="cnt" text-anchor="middle">${c.bins.scrap}</text>`;
+  const arm = (bx, by, t) => `<line x1="${X(bx)}" y1="${Y(by)}" x2="${X(t[0])}" y2="${Y(t[1])}" class="arm"/><circle cx="${X(t[0])}" cy="${Y(t[1])}" r="4.5" class="tcp"/>`;
+  s += arm(L.DELTA_XY[0], L.DELTA_XY[1], c.tools.delta) + arm(L.UR_BASE[0], L.UR_BASE[1], c.tools.ur) + arm(L.IRB_BASE[0], L.IRB_BASE[1], c.tools.irb);
+  s += arm(L.BAXTER[0], L.BAXTER[1] - 0.2, c.tools.bax_l) + arm(L.BAXTER[0], L.BAXTER[1] + 0.2, c.tools.bax_r);
+  $('dyn').innerHTML = s;
+}
+
+// -------------------------------------------------------------------- KPIs
+function rates(h, col) {            // per-minute rate over a rolling 60 s window
+  const out = []; let j = 0;
+  for (let i = 0; i < h.length; i++) {
+    while (j < i && h[j + 1][0] <= h[i][0] - 60) j++;
+    const dt = h[i][0] - h[j][0];
+    out.push(dt >= 20 ? (h[i][col] - h[j][col]) / dt * 60 : null);
+  }
+  return out;
+}
+function drawKpis(d) {
+  const c = d.cell, st = c ? c.stats : null;
+  $('kPacked').textContent = st ? fmt(st.packed) : '0';
+  if (st) {
+    const done = st.packed + st.rejects;
+    $('kPackedNote').textContent = `of ${fmt(st.spawned)} fed` + (done ? ` · yield ${(100 * st.packed / done).toFixed(1)}%` : '');
+    $('kWip').textContent = fmt(c.wip);
+    $('kRej').textContent = fmt(st.rejects);
+    $('kRejNote').textContent = `rework ${fmt(st.sorted_rework)} · scrap ${fmt(st.sorted_scrap)}`;
+    $('kCart').textContent = fmt(st.cartons);
+    $('kCartNote').textContent = `${c.cartons.length} on conveyor B`;
+    $('kPal').textContent = fmt(st.pallets);
+    $('kPalBar').style.width = c.pallet ? (100 * c.pallet.count / c.pallet.cap) + '%' : '0%';
+    $('kPalNote').textContent = c.pallet ? `${c.pallet.count} / ${c.pallet.cap} on current pallet` : 'no pallet at the station';
+    $('kShip').textContent = fmt(st.shipped);
+    $('kShipNote').textContent = 'AMR ' + nice(c.status.amr).toLowerCase();
+    const r = rates(c.history, 2), last = r.length ? r[r.length - 1] : null;
+    $('kRate').firstChild.textContent = last == null ? '–' : last.toFixed(0);
+    $('kRateNote').textContent = 'packed, last 60 s';
+    if (st.qc_total) {
+      $('kAcc').textContent = (100 * st.qc_correct / st.qc_total).toFixed(1) + '%';
+      $('kAccNote').textContent = `${fmt(st.qc_total)} graded · ${st.qc_total - st.qc_correct} misread` + (d.settings.mode === 'oracle' ? ' · ground truth' : '');
+    } else { $('kAcc').textContent = '–'; $('kAccNote').textContent = 'vs simulation ground truth'; }
+  }
+}
+
+// ------------------------------------------------------------------- vision
+function scanList(c) {
+  let a = c ? c.scans.slice().reverse() : [];
+  if (scanFilter === 'defects') a = a.filter(s => s.pred !== 'good');
+  if (scanFilter === 'misreads') a = a.filter(s => s.pred !== s.truth);
+  return a;
+}
+function showScan(s) {
+  if (!s) return;
+  $('scanImg').src = `/scan/${s.id}.png`;
+  $('scanVerdict').innerHTML = glyph(s.pred) + `<span>${GRADE[s.pred]}</span>`;
+  const rows = [['Bar', '#' + s.serial], ['Camera', s.cam === 'qc' ? 'QC gate (on the fly)' : 'Reject sorter (Baxter)'],
+    ['Confidence', (s.conf * 100).toFixed(1) + '%'], ['Graded by', s.source === 'cnn' ? 'Neural network' : 'Ground truth'], ['Sim time', clock(s.t)]];
+  $('scanFacts').innerHTML = rows.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('');
+  const f = $('scanFlag');
+  if (s.pred !== s.truth) { f.style.display = 'block'; f.innerHTML = glyph('alarm') + ` Misread: the simulator says this bar is <b>${GRADE[s.truth].toLowerCase()}</b>`; }
+  else f.style.display = 'none';
+}
+function drawScans(c) {
+  const list = scanList(c), key = scanFilter + ':' + list.map(s => s.id).join(',') + ':' + pinned;
+  if (key === lastScanKey) return;
+  lastScanKey = key;
+  const t = $('thumbs');
+  if (!list.length) { t.innerHTML = `<div class="empty">${c && c.scans.length ? 'No scans match this filter.' : 'Scans appear here once bars pass the cameras.'}</div>`; }
+  else {
+    t.innerHTML = list.map(s => `<button class="thumb${s.pred !== s.truth ? ' misread' : ''}" data-id="${s.id}" aria-pressed="${pinned === s.id}" title="Bar #${s.serial}: ${GRADE[s.pred]} (${(s.conf * 100).toFixed(0)}%)">` +
+      `<img loading="lazy" src="/scan/${s.id}.png" alt=""><span>${glyph(s.pred)}#${s.serial}</span></button>`).join('');
+  }
+  const sel = pinned != null ? (c.scans.find(s => s.id === pinned) || null) : null;
+  if (pinned != null && !sel) pinned = null;
+  showScan(sel || list[0] || (c && c.scans[c.scans.length - 1]));
+  $('scanLive').style.display = pinned != null ? '' : 'none';
+  $('scanSub').textContent = c ? `${c.scans.length} most recent scans` : 'camera scans';
+}
+
+// -------------------------------------------------------------------- trend
+const SERIES = [['Fed', 1, '--s1'], ['Rejected', 3, '--s2'], ['Packed', 2, '--s3']];   // [name, history column, colour slot]
+let trendGeom = null, hoverEv = null;
+function drawTrend(c) {
+  const h = c ? c.history : [];
+  const data = SERIES.map(s => rates(h, s[1]));
+  $('trendKeys').innerHTML = SERIES.map((s, i) => { const v = data[i].length ? data[i][data[i].length - 1] : null;
+    return `<span><i style="background:var(${s[2]})"></i>${s[0]} <b style="color:var(--ink)">${v == null ? '–' : v.toFixed(0)}</b></span>`; }).join('');
+  if (trendTable) return drawTrendTable(h, data);
+  const svg = $('trendSvg'), W = svg.clientWidth || 400, H = 230, m = { l: 34, r: 74, t: 8, b: 22 };
+  const tmax = h.length ? h[h.length - 1][0] : 0, t1 = Math.max(120, tmax), t0 = Math.max(0, t1 - 600);
+  let ymax = 60;
+  for (const d of data) for (const v of d) if (v != null && v > ymax) ymax = v;
+  ymax = Math.ceil(ymax / 20) * 20;
+  const px = t => m.l + (t - t0) / (t1 - t0) * (W - m.l - m.r), py = v => m.t + (1 - v / ymax) * (H - m.t - m.b);
+  let s = '';
+  for (let v = 0; v <= ymax; v += 20) s += `<line class="${v ? 'gridline' : 'axisline'}" x1="${m.l}" x2="${W - m.r}" y1="${py(v)}" y2="${py(v)}"/><text x="${m.l - 6}" y="${py(v) + 4}" text-anchor="end">${v}</text>`;
+  const stepT = (t1 - t0) > 300 ? 120 : 30;
+  for (let t = Math.ceil(t0 / stepT) * stepT; t <= t1; t += stepT) s += `<text x="${px(t)}" y="${H - 5}" text-anchor="middle">${clock(t)}</text>`;
+  const ends = [];
+  SERIES.forEach((se, i) => {
+    let path = '', pen = false, lastPt = null;
+    h.forEach((row, k) => { const v = data[i][k]; if (v == null || row[0] < t0) { pen = false; return; }
+      path += (pen ? 'L' : 'M') + px(row[0]).toFixed(1) + ' ' + py(v).toFixed(1); pen = true; lastPt = [px(row[0]), py(v), v]; });
+    if (path) s += `<path class="ln" d="${path}" stroke="var(${se[2]})"/>`;
+    if (lastPt) { s += `<circle cx="${lastPt[0]}" cy="${lastPt[1]}" r="4" fill="var(${se[2]})" stroke="var(--surface)" stroke-width="2"/>`; ends.push([lastPt, se[0]]); }
+  });
+  ends.sort((a, b) => a[0][1] - b[0][1]);              // direct labels only where they do not collide
+  ends.forEach((e, i) => { const clash = (i > 0 && e[0][1] - ends[i - 1][0][1] < 13);
+    if (!clash) s += `<text class="dl" x="${e[0][0] + 9}" y="${e[0][1] + 4}">${e[1]} ${e[0][2].toFixed(0)}</text>`; });
+  s += `<line class="cross" id="trendCross" y1="${m.t}" y2="${H - m.b}" style="display:none"/>`;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = s;
+  trendGeom = { h, data, px, t0, t1, m, W };
+  if (hoverEv) trendHover(hoverEv);
+}
+function drawTrendTable(h, data) {
+  const rows = [];
+  for (let k = h.length - 1; k >= 0 && rows.length < 14; k--) if (Math.round(h[k][0]) % 30 < 2) rows.push(k);
+  const cell = v => v == null ? '–' : v.toFixed(0);
+  $('trendTable').innerHTML = '<table class="data"><thead><tr><th>Sim time</th>' + SERIES.map(s => `<th>${s[0]} / min</th>`).join('') + '</tr></thead><tbody>' +
+    (rows.length ? rows.map(k => `<tr><td>${clock(h[k][0])}</td>` + data.map(d => `<td>${cell(d[k])}</td>`).join('') + '</tr>').join('') : '<tr><td colspan="4" style="text-align:left;color:var(--muted)">No data yet</td></tr>') + '</tbody></table>';
+}
+function trendHover(ev) {
+  const g = trendGeom, tip = $('trendTip'), cross = $('trendCross');
+  if (!g || !g.h.length || !cross) return;
+  const r = $('trendSvg').getBoundingClientRect(), x = ev.clientX - r.left;
+  let best = -1, bd = 1e9;
+  g.h.forEach((row, k) => { if (row[0] < g.t0) return; const d = Math.abs(g.px(row[0]) - x); if (d < bd) { bd = d; best = k; } });
+  if (best < 0) return;
+  const cx = g.px(g.h[best][0]);
+  cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.style.display = '';
+  tip.innerHTML = `<div class="when">at ${clock(g.h[best][0])}</div>` + SERIES.map((s, i) => { const v = g.data[i][best];
+    return `<div class="row"><i style="background:var(${s[2]})"></i><b>${v == null ? '–' : v.toFixed(0)}</b><span>${s[0]} / min</span></div>`; }).join('');
+  tip.style.display = 'block';
+  tip.style.left = Math.min(cx + 12, g.W - 150) + 'px'; tip.style.top = '12px';
+}
+
+// ----------------------------------------------------- stations, events, bar
+function buildStations() {
+  $('stations').innerHTML = STATION_ROWS.map(r => `<tr><td><b>${r[1]}</b></td><td class="role">${r[2]}</td><td><span class="chip" id="ts_${r[0]}"></span></td>` +
+    `<td><label class="switch" title="Cycle stop: ${r[1]}"><input type="checkbox" data-st="${r[0]}" aria-label="Cycle stop ${r[1]}"><i></i></label></td></tr>`).join('');
+  $('stations').addEventListener('change', e => { const s = e.target.dataset.st; if (s) send('hold_station', { station: s, value: e.target.checked }); });
+}
+function drawStations(d) {
+  const c = d.cell, live = c && d.line !== 'STOPPED' && d.line !== 'FAULT';
+  for (const r of STATION_ROWS) {
+    const raw = live ? c.status[r[0]] : null, cls = live ? stClass(raw) : 'idle', txt = live ? nice(raw) : 'Off';
+    $('ts_' + r[0]).innerHTML = glyph(cls) + `<span>${txt}</span>`;
+    const m = $('ms_' + r[0]); if (m) m.textContent = live ? txt : '';
+    const box = document.querySelector(`input[data-st="${r[0]}"]`);
+    if (document.activeElement !== box) box.checked = !!d.holds[r[0]];
+  }
+}
+function drawEvents(c) {
+  const ev = c ? c.events : [];
+  const top = ev.length ? ev[ev.length - 1][0] : -1;
+  if (top === lastEventId) return;
+  lastEventId = top;
+  const ul = $('events'); ul.textContent = '';
+  if (!ev.length) { ul.innerHTML = '<li><time></time><span></span><span class="empty" style="padding:0">No events yet</span></li>'; return; }
+  for (let i = ev.length - 1; i >= 0; i--) {
+    const e = ev[i]; if (e[3].startsWith('KPI ')) continue;
+    const li = document.createElement('li'), t = document.createElement('time'), ic = document.createElement('span'), msg = document.createElement('span');
+    t.textContent = clock(e[1]); ic.innerHTML = glyph({ info: 'info', warn: 'warn', alarm: 'alarm', good: 'ok' }[e[2]] || 'info'); msg.textContent = e[3];
+    li.append(t, ic, msg); ul.append(li);
+  }
+}
+const STATE = {
+  RUNNING: ['RUNNING', 'line is producing', 'var(--good)', '<circle cx="11" cy="11" r="9"/>'],
+  HELD: ['HELD', 'frozen by the operator, press Resume', 'var(--warn)', '<rect x="4" y="3" width="5" height="16"/><rect x="13" y="3" width="5" height="16"/>'],
+  STOPPED: ['STOPPED', 'press Start to run the line', 'var(--muted)', '<rect x="3.5" y="3.5" width="15" height="15" rx="2"/>'],
+  ESTOP: ['E-STOP', 'all motion frozen, reset to continue', 'var(--crit)', '<path d="M7 1h8l6 6v8l-6 6H7l-6-6V7Z"/>'],
+  FAULT: ['FAULT', 'controller error, see details below', 'var(--crit)', '<path d="M11 1 21.5 20H.5Z"/>'],
+  OFFLINE: ['OFFLINE', 'dashboard server not reachable', 'var(--muted)', '<circle cx="11" cy="11" r="8" fill="none" stroke="var(--muted)" stroke-width="2"/>'],
+};
+function drawBar(d) {
+  const st = online ? d.line : 'OFFLINE', v = STATE[st] || STATE.OFFLINE;
+  $('stateLabel').textContent = v[0]; $('stateSub').textContent = v[1];
+  $('stateIcon').innerHTML = v[3]; $('stateIcon').style.fill = v[2];
+  $('clock').textContent = clock(d && d.cell ? d.cell.t : 0);
+  $('bStart').disabled = !(st === 'STOPPED' || st === 'FAULT');
+  const hb = $('bHold'); hb.textContent = st === 'HELD' ? 'Resume' : 'Hold'; hb.disabled = !(st === 'RUNNING' || st === 'HELD');
+  const sb = $('bStop'); sb.disabled = !(st === 'RUNNING' || st === 'HELD' || st === 'ESTOP');
+  if (Date.now() > stopArmed) sb.textContent = 'Stop';
+  const eb = $('bEstop'); eb.textContent = st === 'ESTOP' ? 'Reset E-STOP' : 'E-STOP'; eb.disabled = !(st === 'RUNNING' || st === 'HELD' || st === 'ESTOP');
+  if (d) for (const b of $('speed').children) b.setAttribute('aria-pressed', String(+b.dataset.v === d.speed));
+  const f = $('fault'); f.style.display = d && d.fault ? 'block' : 'none'; if (d && d.fault) f.textContent = d.fault;
+}
+const UNITS = { feed_rate: v => v + ' /min', belt_speed: v => (+v).toFixed(2) + ' m/s', rework_pct: v => v + ' %', scrap_pct: v => v + ' %' };
+function drawControls(d) {
+  for (const k in UNITS) { const el = $('c_' + k);
+    if (document.activeElement !== el) { el.value = d.settings[k]; $('o_' + k).textContent = UNITS[k](d.settings[k]); } }
+  for (const b of $('segLayers').children) b.setAttribute('aria-pressed', String(+b.dataset.v === d.settings.layers));
+  for (const b of $('segMode').children) { b.setAttribute('aria-pressed', String(b.dataset.v === d.settings.mode)); if (b.dataset.v === 'cnn') b.disabled = !d.cnn_available; }
+  const maxFeed = Math.floor(d.settings.belt_speed / 0.17 * 60);
+  $('ctlHint').textContent = (d.settings.feed_rate > maxFeed ? `At this belt speed the feeder tops out near ${maxFeed} bars/min (bars need 17 cm spacing for the camera). ` : '') +
+    'Rework and scrap shares describe the incoming supply. Pallet layers apply to the next empty pallet.';
+}
+
+// --------------------------------------------------------------------- loop
+function render(d) {
+  drawBar(d); drawControls(d); drawStations(d); drawKpis(d);
+  if (d.cell) drawMimic(d.cell);
+  drawScans(d.cell); drawTrend(d.cell); drawEvents(d.cell);
+}
+let busy = false;
+async function poll() {
+  if (busy) return; busy = true;
+  try {
+    const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 1500);
+    const r = await fetch('/api/state', { signal: ctl.signal, cache: 'no-store' }); clearTimeout(to);
+    S = await r.json(); online = true; render(S);
+  } catch (e) { online = false; drawBar(S); }
+  busy = false;
+}
+function liveLoop() {
+  const img = $('live'), next = () => setTimeout(liveLoop, 350);
+  const probe = new Image();
+  probe.onload = () => { img.src = probe.src; next(); };
+  probe.onerror = () => setTimeout(liveLoop, 900);
+  probe.src = `/view/${view}.jpg?ts=${Date.now()}`;
+}
+async function init() {
+  LAY = await (await fetch('/api/layout')).json();
+  buildMimic(); buildStations();
+  $('viewSel').innerHTML = LAY.views.map(v => `<button data-v="${v}" aria-pressed="${v === view}">${{ overview: 'Overview', pack: 'Packing', pallet: 'Palletizing', baxter: 'Sorting' }[v] || v}</button>`).join('');
+  $('viewSel').addEventListener('click', e => { const v = e.target.dataset.v; if (!v) return; view = v; for (const b of $('viewSel').children) b.setAttribute('aria-pressed', String(b.dataset.v === v)); });
+  $('bStart').onclick = () => send('start');
+  $('bHold').onclick = () => send(S && S.line === 'HELD' ? 'resume' : 'hold');
+  $('bEstop').onclick = () => send(S && S.line === 'ESTOP' ? 'reset' : 'estop');
+  $('bStop').onclick = () => {                         // two-step: the run ends and the scene is cleared
+    if (Date.now() < stopArmed) { stopArmed = 0; send('stop'); }
+    else { stopArmed = Date.now() + 3000; $('bStop').textContent = 'Confirm stop'; }
+  };
+  $('bReset').onclick = () => send('reset_counters');
+  $('bTheme').onclick = () => { const t = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', t); localStorage.setItem('hmi-theme', t); };
+  $('speed').addEventListener('click', e => { if (e.target.dataset.v != null) send('speed', { value: +e.target.dataset.v }); });
+  $('segLayers').addEventListener('click', e => { if (e.target.dataset.v) send('set', { key: 'layers', value: +e.target.dataset.v }); });
+  $('segMode').addEventListener('click', e => { if (e.target.dataset.v && !e.target.disabled) send('set', { key: 'mode', value: e.target.dataset.v }); });
+  $('ctl').addEventListener('input', e => { const k = e.target.dataset.k; if (k) $('o_' + k).textContent = UNITS[k](e.target.value); });
+  $('ctl').addEventListener('change', e => { const k = e.target.dataset.k; if (k) { send('set', { key: k, value: +e.target.value }); e.target.blur(); } });
+  $('scanFilter').addEventListener('click', e => { const v = e.target.dataset.v; if (!v) return; scanFilter = v; lastScanKey = '';
+    for (const b of $('scanFilter').children) b.setAttribute('aria-pressed', String(b.dataset.v === v)); if (S) drawScans(S.cell); });
+  $('thumbs').addEventListener('click', e => { const b = e.target.closest('.thumb'); if (!b) return; const id = +b.dataset.id;
+    pinned = pinned === id ? null : id; lastScanKey = ''; if (S) drawScans(S.cell); });
+  $('scanLive').onclick = () => { pinned = null; lastScanKey = ''; if (S) drawScans(S.cell); };
+  $('trendToggle').onclick = () => { trendTable = !trendTable; $('trendToggle').setAttribute('aria-pressed', String(trendTable));
+    $('trendToggle').textContent = trendTable ? 'Chart' : 'Table'; $('trend').style.display = trendTable ? 'none' : ''; $('trendTable').style.display = trendTable ? '' : 'none'; if (S) drawTrend(S.cell); };
+  $('trend').addEventListener('pointermove', e => { hoverEv = e; trendHover(e); });
+  $('trend').addEventListener('pointerleave', () => { hoverEv = null; $('trendTip').style.display = 'none'; const c = $('trendCross'); if (c) c.style.display = 'none'; });
+  window.addEventListener('resize', () => { if (S) drawTrend(S.cell); });
+  poll(); setInterval(poll, 250); liveLoop();
+}
+init();
+</script>
+</body>
+</html>
