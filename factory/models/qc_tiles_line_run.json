@@ -1,0 +1,22 @@
+{
+ "tiles": 268,
+ "sim_seconds": 353.7,
+ "seed": 1,
+ "outcome_truth_to_destination": {
+  "good>carton": 181,
+  "rework>carton": 9,
+  "good>rework": 7,
+  "scrap>scrap": 29,
+  "rework>rework": 31,
+  "rework>scrap": 4,
+  "good>scrap": 2,
+  "scrap>rework": 2,
+  "scrap>carton": 3
+ },
+ "qc_gate_correct": 245,
+ "qc_gate_total": 268,
+ "packed": 193,
+ "rejected": 75,
+ "cartons": 48,
+ "pallets": 4
+}

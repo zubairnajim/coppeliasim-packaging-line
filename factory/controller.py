@@ -5,6 +5,7 @@ Runs outside CoppeliaSim through the ZMQ remote API in stepped mode:
     python -m factory.controller                 # run until Ctrl+C
     python -m factory.controller --time 180      # run 180 simulated seconds
     python -m factory.controller --oracle        # skip the CNN, use ground-truth labels
+    python -m factory.controller --parts tiles   # feed real magnetic-tile photographs instead of bars
 
 Every robot is a small coroutine (Python generator) that is advanced once per simulation
 step.  All motion is kinematic: the coroutines move IK *target* dummies, the in-scene
@@ -14,6 +15,7 @@ by re-parenting (the usual way vacuum grippers are simulated).
 import argparse
 import collections
 import math
+import os
 import random
 import time
 
@@ -68,10 +70,11 @@ class Tool:
 
 
 class Cell:
-    def __init__(self, oracle=False, seed=1, realtime=False):
+    def __init__(self, oracle=False, seed=1, realtime=False, parts='bars'):
         self.client = RemoteAPIClient()
         self.sim = sim = self.client.require('sim')
         self.rnd = random.Random(seed)
+        self.seed = seed
         self.realtime = realtime
         self.bridge = sim.getObject('/FactoryBridge/script')
         self.dt = sim.getSimulationTimeStep()
@@ -82,12 +85,22 @@ class Cell:
         g = sim.getObject
         self.tpl = {c: [g('/tpl_%s_%02d' % (c, v)) for v in range(L.N_VARIANTS)] for c in L.CLASSES}
         self.tpl_carton, self.tpl_lid, self.tpl_pallet = g('/tpl_carton'), g('/tpl_lid'), g('/tpl_pallet')
-        self.stripes = {n: g('/Belt' + n) for n in ('A', 'B')}
-        self.belt_pos = {'A': 0.0, 'B': 0.0}
+        self.stripes = {n: g('/Belt' + n) for n in ('A', 'B', 'BIn')}
+        self.belt_pos = {'A': 0.0, 'B': 0.0, 'BIn': 0.0}
         self.amr = g('/AMR')
         self.amr_z = sim.getObjectPosition(self.amr, -1)[2]
         self.cams = {'qc': g('/QC_cam'), 'sort': g('/Sort_cam')}
-        self.classifier = Classifier.load()
+        self.parts = parts                              # 'bars' (simulated) or 'tiles' (real photographs)
+        self.noun = 'tile' if parts == 'tiles' else 'bar'
+        if parts == 'tiles':
+            from . import real_parts
+            self.classifier = Classifier.load(real_parts.MODEL)
+        else:
+            self.classifier = Classifier.load()
+        self.tile_queue = []                            # (template, grade, tile index), fed once each
+        self.tile_total = 0
+        self.outcome = {}                               # 'truth>destination' -> parts (destination: carton / rework / scrap)
+        self.cams_zoom = None
         if self.classifier is None:
             print('[cell] no trained CNN found -> ground-truth labels (oracle mode)')
 
@@ -242,16 +255,30 @@ class Cell:
                 run_time += self.dt
                 self.frame[carrier] = [self.a_offset, 0, 0, 0, 0, 0, 1]
                 due = run_time - self.last_spawn >= 60.0 / max(1.0, self.set['feed_rate'])
-                if due and not self.hold['feeder'] and self.a_offset - self.last_spawn_offset >= min_gap:
+                empty = self.parts == 'tiles' and not self.tile_queue
+                if empty:
+                    self.status['feeder'] = 'IDLE'
+                if due and not empty and not self.hold['feeder'] and self.a_offset - self.last_spawn_offset >= min_gap:
                     self.last_spawn, self.last_spawn_offset = run_time, self.a_offset
-                    rw, sc = self.set['rework_pct'] / 100.0, self.set['scrap_pct'] / 100.0
-                    cls = self.rnd.choices(L.CLASSES, (max(0.0, 1.0 - rw - sc), rw, sc))[0]
-                    y = L.A_Y + self.rnd.uniform(-0.07, 0.07)
-                    yaw = self.rnd.uniform(-PI, PI)
-                    h = self.spawn(self.rnd.choice(self.tpl[cls]), [L.A_SPAWN_X, y, z], yaw, carrier)
+                    tile = None
+                    if self.parts == 'tiles':
+                        from .real_parts import Y_JITTER, YAW_JITTER
+                        h, cls, tile = self.tile_queue.pop()
+                        y = L.A_Y + self.rnd.uniform(-Y_JITTER, Y_JITTER)
+                        yaw = self.rnd.uniform(-YAW_JITTER, YAW_JITTER) + (PI if self.rnd.random() < 0.5 else 0.0)
+                        self.sim.setObjectPose(h, [L.A_SPAWN_X, y, z] + yaw_quat(yaw), -1)
+                        self.sim.setObjectParent(h, carrier, True)
+                        if not self.tile_queue:
+                            self.log('last of the %d real tiles is on the belt' % self.tile_total)
+                    else:
+                        rw, sc = self.set['rework_pct'] / 100.0, self.set['scrap_pct'] / 100.0
+                        cls = self.rnd.choices(L.CLASSES, (max(0.0, 1.0 - rw - sc), rw, sc))[0]
+                        y = L.A_Y + self.rnd.uniform(-0.07, 0.07)
+                        yaw = self.rnd.uniform(-PI, PI)
+                        h = self.spawn(self.rnd.choice(self.tpl[cls]), [L.A_SPAWN_X, y, z], yaw, carrier)
                     self.serial += 1
                     self.products.append(dict(h=h, cls=cls, pred=None, x0=L.A_SPAWN_X - self.a_offset, y=y,
-                                              yaw=yaw, state='belt', serial=self.serial))
+                                              yaw=yaw, state='belt', serial=self.serial, tile=tile))
                     self.stats['spawned'] += 1
             for p in self.products:
                 if p['state'] != 'belt':
@@ -265,7 +292,7 @@ class Cell:
                     self.end_slot = p
                     if p['pred'] == 'good':
                         self.stats['missed'] += 1
-                        self.log('good bar #%d was not picked and reached the reject stop' % p['serial'], 'warn')
+                        self.log('good %s #%d was not picked and reached the reject stop' % (self.noun, p['serial']), 'warn')
             self.products = [p for p in self.products if p['state'] != 'done']
             yield
 
@@ -293,39 +320,65 @@ class Cell:
                 self.stats['qc_' + p['pred']] += 1
                 self.stats['qc_correct'] += p['pred'] == p['cls']
                 if p['pred'] != p['cls']:
-                    self.log('QC camera graded bar #%d as %s (%.0f%%) but it is %s'
-                             % (p['serial'], p['pred'], conf * 100, p['cls']), 'warn')
+                    self.log('QC camera graded %s #%d as %s (%.0f%%) but it is %s'
+                             % (self.noun, p['serial'], p['pred'], conf * 100, p['cls']), 'warn')
 
     # ------------------------------------------------------------ conveyor B
     def carton_line(self):
-        """Carton erector, fill-station stopper, case sealer and accumulation at the end stop."""
+        """Conveyor B in two sections.  The indexing section (erector -> delta) moves its cartons as one
+        block and stops while an empty carton sits at the fill position, so waiting cartons stand still
+        on a stopped belt.  The outfeed section (delta -> palletizer) always runs; cartons there ride
+        to the end stop and queue nose to tail behind it, the belt slipping under them."""
         v = L.B_SPEED
-        gap = L.CARTON[0] + 0.03
+        touch = L.CARTON[0] + 0.003           # queued cartons rest against the one in front
         z = L.BELT_Z
+        eps = 1e-6
         while True:
+            cs = self.cartons                 # downstream first
+            step = v * self.dt
+            # ---- outfeed section: always running
             self.belt('B', -v)
-            cs = self.cartons
-            if not cs or (cs[-1]['x'] <= L.B_SPAWN_X - L.B_PITCH and sum(c['x'] > L.B_FILL_X for c in cs) < 2):
-                h = self.spawn(self.tpl_carton, [L.B_SPAWN_X, L.B_Y, z])
-                cs.append(dict(h=h, x=L.B_SPAWN_X, count=0, full=False, sealed=False, state='belt', reserved=0))
-            for i, c in enumerate(cs):
-                if c['state'] != 'belt':
-                    continue
-                limit = L.B_END_X
-                if not c['full']:
-                    limit = L.B_FILL_X
-                if i > 0 and cs[i - 1]['state'] in ('belt', 'ready'):
-                    limit = max(limit, cs[i - 1]['x'] + gap)
-                nx = max(limit, c['x'] - v * self.dt)
-                if nx != c['x']:
-                    c['x'] = nx
-                    self.frame[c['h']] = [nx, L.B_Y, z, 0, 0, 0, 1]
+            ahead = None
+            for c in cs:
+                if c['x'] > L.B_SPLIT_X:
+                    break
+                if c['state'] == 'belt':
+                    limit = L.B_END_X if ahead is None else ahead['x'] + touch
+                    nx = max(limit, c['x'] - step)
+                    if nx != c['x']:
+                        c['x'] = nx
+                        self.frame[c['h']] = [nx, L.B_Y, z, 0, 0, 0, 1]
+                    if c['x'] <= L.B_END_X + eps:
+                        c['state'] = 'ready'
+                ahead = c
+            # ---- indexing section: moves as a block, stops with an empty carton at the fill position
+            block = [c for c in cs if c['x'] > L.B_SPLIT_X]
+            d = step
+            for c in block:
+                if not c['full'] and c['x'] >= L.B_FILL_X - eps:
+                    d = min(d, c['x'] - L.B_FILL_X)
+            if block and ahead is not None:
+                d = min(d, block[0]['x'] - (ahead['x'] + touch))
+            d = max(0.0, d)
+            self.status['indexer'] = 'RUN' if d > eps else 'STOPPED'
+            if d > eps:
+                self.belt('BIn', -d / self.dt)
+                for c in block:
+                    c['x'] -= d
+                    if abs(c['x'] - L.B_FILL_X) < 1e-4 and not c['full']:
+                        c['x'] = L.B_FILL_X
+                    self.frame[c['h']] = [c['x'], L.B_Y, z, 0, 0, 0, 1]
+            # ---- case sealer
+            for c in cs:
                 if c['full'] and not c['sealed'] and c['x'] <= L.B_SEAL_X:
                     c['sealed'] = True
                     lid = self.spawn(self.tpl_lid, [c['x'], L.B_Y, z + L.CARTON[2]], 0.0, c['h'])
                     self.spawned.remove(lid)      # removed together with its carton
-                if c['x'] <= L.B_END_X:
-                    c['state'] = 'ready'
+            # ---- carton erector: a new carton every pitch of indexing travel, at most three waiting
+            upstream = [c for c in cs if c['x'] > L.B_SPLIT_X]
+            if (not upstream or upstream[-1]['x'] <= L.B_SPAWN_X - L.B_PITCH) and len(upstream) < 3:
+                h = self.spawn(self.tpl_carton, [L.B_SPAWN_X, L.B_Y, z])
+                cs.append(dict(h=h, x=L.B_SPAWN_X, count=0, full=False, sealed=False, state='belt', reserved=0))
             yield
 
     def fill_carton(self):
@@ -383,6 +436,7 @@ class Cell:
             c['count'] += 1
             c['reserved'] -= 1
             self.stats['packed'] += 1
+            self.record(p, 'carton')
             if c['count'] == len(L.SLOTS):
                 c['full'] = True
                 self.stats['cartons'] += 1
@@ -595,6 +649,7 @@ class Cell:
             truth = 'rework' if p['cls'] == 'good' else p['cls']
             self.stats['rejects'] += 1
             self.stats['sorted_' + dest] += 1
+            self.record(p, dest)
             self.stats['sort_total'] += 1
             self.stats['sort_correct'] += dest == truth
             self.status['sorter'] = 'SORT ' + dest.upper()
@@ -620,13 +675,49 @@ class Cell:
             yield from self.move(tool, homes[side], speed=1.4, arc=0.04)
 
     # -------------------------------------------------------------- main loop
+    def record(self, p, dest):
+        k = '%s>%s' % (p['cls'], dest)
+        self.outcome[k] = self.outcome.get(k, 0) + 1
+
+    def batch_done(self):
+        return (self.parts == 'tiles' and self.tile_total > 0 and not self.tile_queue
+                and sum(self.outcome.values()) == self.tile_total)
+
+    def outcome_table(self):
+        rows = ['        %-8s %7s %7s %7s' % ('truth', 'carton', 'rework', 'scrap')]
+        for g in L.CLASSES:
+            rows.append('        %-8s %7d %7d %7d' % (g, *[self.outcome.get('%s>%s' % (g, d), 0) for d in ('carton', 'rework', 'scrap')]))
+        return '\n'.join(rows)
+
+    def prepare_tiles(self):
+        """Turn the held-out tile photographs into textured parts waiting below the floor."""
+        from . import real_parts
+        X, _, grades, _ = real_parts.load_tiles()
+        test = real_parts.split()[2]
+        maker = real_parts.PartMaker(self.sim)
+        root = self.sim.getObject('/Templates')
+        try:
+            for i in test:
+                h = maker.make(X[i], root)
+                self.spawned.append(h)
+                self.tile_queue.append((h, L.CLASSES[grades[i]], int(i)))
+        finally:
+            maker.close()
+        self.rnd.shuffle(self.tile_queue)
+        self.tile_total = len(self.tile_queue)
+        self.cams_zoom = real_parts.Cameras(self.sim)
+        self.cams_zoom.zoom()
+        counts = {g: sum(t[1] == g for t in self.tile_queue) for g in L.CLASSES}
+        self.log('%d real magnetic tiles loaded (unseen by the network): %s' % (self.tile_total, counts))
+
     def report(self):
         s = self.stats
         acc = 100.0 * s['qc_correct'] / s['qc_total'] if s['qc_total'] else float('nan')
-        self.log('KPI  bars in=%d packed=%d | cartons=%d | pallets built=%d shipped=%d | rejects sorted=%d '
-                 '| QC accuracy=%.1f%% (%d) | good bars missed=%d'
-                 % (s['spawned'], s['packed'], s['cartons'], s['pallets'], s['shipped'], s['rejects'],
-                    acc, s['qc_total'], s['missed']))
+        n = self.noun
+        self.log('KPI  %ss in=%d packed=%d | cartons=%d | pallets built=%d shipped=%d | rejects sorted=%d '
+                 '| QC accuracy=%.1f%% (%d) | good %ss missed=%d'
+                 % (n, s['spawned'], s['packed'], s['cartons'], s['pallets'], s['shipped'], s['rejects'],
+                    acc, s['qc_total'], n, s['missed']))
 
     def snapshot(self):
         """Plain-data picture of the line for the dashboard (no simulator calls)."""
@@ -638,7 +729,9 @@ class Cell:
         r3 = lambda v: [round(v[0], 3), round(v[1], 3)]
         return dict(
             t=round(self.t, 2), stats=dict(self.stats), settings=dict(self.set), hold=dict(self.hold),
-            status=dict(self.status), cnn_available=self.classifier is not None,
+            status=dict(self.status), cnn_available=self.classifier is not None, parts=self.parts,
+            batch=dict(total=self.tile_total, fed=self.tile_total - len(self.tile_queue), outcome=dict(self.outcome))
+            if self.parts == 'tiles' else None,
             wip=sum(p['state'] in ('belt', 'claimed', 'held', 'at_end') for p in self.products),
             bars=bars,
             cartons=[[round(c['x'], 3), c['count'], int(c['sealed'])] for c in self.cartons],
@@ -661,6 +754,8 @@ class Cell:
         self.client.setStepping(True)
         sim.startSimulation()
         self.restock()
+        if self.parts == 'tiles':
+            self.prepare_tiles()
         self.tasks = [self.infeed(), self.carton_line(), self.delta_task(), self.ur_task(), self.irb_task(),
                       self.amr_task(), self.shipping_task(), self.baxter_task()]
         self.log('line started (%s inspection)' % ('CNN' if self.set['mode'] == 'cnn' else 'ground-truth'))
@@ -683,6 +778,20 @@ class Cell:
     def stop(self):
         sim = self.sim
         self.report()
+        if self.parts == 'tiles':
+            print('where the %d real tiles ended up (rows: true grade, columns: destination)' % sum(self.outcome.values()))
+            print(self.outcome_table())
+            if self.batch_done():
+                import json
+                from .real_parts import HERE
+                s = self.stats
+                with open(os.path.join(HERE, 'models', 'qc_tiles_line_run.json'), 'w') as f:
+                    json.dump(dict(tiles=self.tile_total, sim_seconds=round(self.t, 1), seed=self.seed,
+                                   outcome_truth_to_destination=self.outcome, qc_gate_correct=s['qc_correct'],
+                                   qc_gate_total=s['qc_total'], packed=s['packed'], rejected=s['rejects'],
+                                   cartons=s['cartons'], pallets=s['pallets']), f, indent=1)
+            if self.cams_zoom:
+                self.cams_zoom.restore()
         try:
             fails = sim.callScriptFunction('getIkFailures', self.bridge)
             if fails:
@@ -703,6 +812,9 @@ class Cell:
         wall0 = time.time()
         try:
             while duration is None or self.t < duration:
+                if self.batch_done():
+                    self.log('batch complete: all %d real tiles inspected and sorted' % self.tile_total, 'good')
+                    break
                 self.step()
                 if on_step:
                     on_step(self)
@@ -726,8 +838,10 @@ def main():
     ap.add_argument('--oracle', action='store_true', help='use ground-truth labels instead of the CNN')
     ap.add_argument('--realtime', action='store_true', help='do not run faster than real time')
     ap.add_argument('--seed', type=int, default=1)
+    ap.add_argument('--parts', choices=['bars', 'tiles'], default='bars',
+                    help="'tiles' feeds the held-out real magnetic-tile photographs (see factory/real_parts.py)")
     a = ap.parse_args()
-    Cell(oracle=a.oracle, seed=a.seed, realtime=a.realtime).run(a.time)
+    Cell(oracle=a.oracle, seed=a.seed, realtime=a.realtime, parts=a.parts).run(a.time)
 
 
 if __name__ == '__main__':

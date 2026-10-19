@@ -35,7 +35,7 @@ SPEEDS = (0.5, 1.0, 2.0, 0.0)          # 0 = as fast as possible
 
 
 def layout_json():
-    keys = ('BELT_W A_Y A_X0 A_X1 A_SPAWN_X QC_X A_END_X B_Y B_X0 B_X1 B_FILL_X B_SEAL_X B_END_X CARTON PALLET '
+    keys = ('BELT_W A_Y A_X0 A_X1 A_SPAWN_X QC_X A_END_X B_Y B_X0 B_X1 B_SPLIT_X B_FILL_X B_SEAL_X B_END_X CARTON PALLET '
             'DELTA_XY UR_BASE STATION IRB_BASE IRB_R STACK DOCK AMR_UNLOAD_X SHIP_X0 SHIP_X1 BAXTER BIN_REWORK '
             'BIN_SCRAP SLOTS').split()
     d = {k: getattr(L, k) for k in keys}
@@ -45,17 +45,22 @@ def layout_json():
 
 
 class Supervisor:
-    def __init__(self, seed=1):
+    def __init__(self, seed=1, parts='bars'):
         self.client = RemoteAPIClient()
         self.sim = self.client.require('sim')
         self.views = {n: self.sim.getObject('/View_' + n) for n in L.VIEWS}
         self.seed = seed
+        self.parts = parts
         self.state = 'STOPPED'               # STOPPED | RUNNING | HELD | ESTOP | FAULT
         self.fault = ''
         self.cell = None
         self.cmds = queue.Queue()
         self.speed = 1.0
-        cnn = os.path.exists(MODEL_PATH)
+        if parts == 'tiles':
+            from .real_parts import MODEL
+            cnn = os.path.exists(MODEL)
+        else:
+            cnn = os.path.exists(MODEL_PATH)
         self.settings = dict(feed_rate=52.0, belt_speed=L.A_SPEED, rework_pct=11.0, scrap_pct=9.0,
                              layers=L.PALLET_LAYERS, mode='cnn' if cnn else 'oracle')
         self.holds = {s: False for s in STATIONS}
@@ -74,7 +79,7 @@ class Supervisor:
     def command(self, c):
         cmd = c.get('cmd')
         if cmd == 'start' and self.state in ('STOPPED', 'FAULT'):
-            self.cell = Cell(seed=self.seed)
+            self.cell = Cell(seed=self.seed, parts=self.parts)
             self.cnn_available = self.cell.classifier is not None
             if not self.cnn_available:
                 self.settings['mode'] = 'oracle'
@@ -271,9 +276,10 @@ def main():
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--no-browser', action='store_true')
     ap.add_argument('--autostart', action='store_true', help='start the line immediately')
+    ap.add_argument('--parts', choices=['bars', 'tiles'], default='bars', help="'tiles' feeds real magnetic-tile photographs")
     a = ap.parse_args()
 
-    sup = Supervisor(seed=a.seed)
+    sup = Supervisor(seed=a.seed, parts=a.parts)
     server = ThreadingHTTPServer(('127.0.0.1', a.port), make_handler(sup, a.port))
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()

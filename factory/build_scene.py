@@ -268,7 +268,8 @@ class Builder:
 
     def infeed_and_packing(self):
         self.conveyor('A', L.A_X0, L.A_X1, L.A_Y, L.BELT_Z, L.BELT_W)
-        self.conveyor('B', L.B_X1, L.B_X0, L.B_Y, L.BELT_Z, L.BELT_W)
+        self.conveyor('B', L.B_X1, L.B_SPLIT_X - 0.01, L.B_Y, L.BELT_Z, L.BELT_W)       # outfeed, always running
+        self.conveyor('BIn', L.B_SPLIT_X + 0.01, L.B_X0, L.B_Y, L.BELT_Z, L.BELT_W)    # indexing, stops for filling
         self.dummy('CarrierA', [0, 0, 0])
         f = self.dummy('Feeder', [L.A_X0, L.A_Y, 0])
         self.box('hopper', [0.45, 0.40, 0.45], [L.A_SPAWN_X - 0.12, L.A_Y, L.BELT_Z + 0.33], BLUE, f)

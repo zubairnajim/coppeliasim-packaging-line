@@ -16,9 +16,11 @@ def grab(sim, cam):
     return np.frombuffer(img, np.uint8).reshape(res[1], res[0], 3)[::-1].copy()
 
 
-def build_net():
+def build_net(n_classes=None):
     import torch
     import torch.nn as nn
+
+    n_classes = n_classes or len(L.CLASSES)
 
     def block(i, o):
         # GroupNorm instead of BatchNorm: identical behaviour in training and inference
@@ -35,7 +37,7 @@ def build_net():
         def forward(self, x):
             return self.fc(self.drop(torch.cat([x.mean((2, 3)), x.amax((2, 3))], 1)))
 
-    return nn.Sequential(block(3, 16), block(16, 32), block(32, 64), block(64, 64), Head(64, len(L.CLASSES)))
+    return nn.Sequential(block(3, 16), block(16, 32), block(32, 64), block(64, 64), Head(64, n_classes))
 
 
 class Classifier:

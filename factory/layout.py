@@ -20,7 +20,8 @@ B_SPAWN_X = 1.00
 B_FILL_X = 0.00                    # carton stops here under the delta
 B_SEAL_X = -1.20                   # case sealer tunnel
 B_END_X = -2.78                    # end stop / palletizer pick point
-B_PITCH = 0.50                     # carton spacing on belt
+B_SPLIT_X = -0.11                  # indexing section (stops while a carton is filled) | outfeed section (always runs)
+B_PITCH = 0.25                     # carton spacing set by the erector on the indexing section
 B_QUEUE_PITCH = 0.20
 B_QUEUE_MAX = 4
 

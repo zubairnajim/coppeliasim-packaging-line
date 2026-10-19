@@ -1,0 +1,43 @@
+{
+ "train_pictures": 2418,
+ "val_pictures": 540,
+ "test_pictures": 536,
+ "best_epoch": 191,
+ "val_accuracy": 0.8944444444444445,
+ "test_accuracy": 0.8992537313432836,
+ "test_balanced_accuracy": 0.8369570316164743,
+ "test_defect_catch_rate": 0.8461538461538461,
+ "test_false_reject_rate": 0.05263157894736842,
+ "classes": [
+  "good",
+  "rework",
+  "scrap"
+ ],
+ "test_confusion_rows_true_cols_pred": [
+  [
+   360,
+   12,
+   8
+  ],
+  [
+   16,
+   69,
+   3
+  ],
+  [
+   8,
+   7,
+   53
+  ]
+ ],
+ "grade_mapping": {
+  "free": "good",
+  "blowhole": "rework",
+  "uneven": "rework",
+  "break": "scrap",
+  "crack": "scrap",
+  "fray": "scrap"
+ },
+ "camera_fov_deg": 10.0,
+ "epochs": 200
+}

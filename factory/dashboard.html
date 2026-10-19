@@ -197,7 +197,7 @@
 <header class="bar">
   <div class="brand">
     <h1>Packaging line 1</h1>
-    <span>Soap bars: inspect, pack, palletize, ship &middot; CoppeliaSim digital twin</span>
+    <span id="brandSub">Soap bars: inspect, pack, palletize, ship &middot; CoppeliaSim digital twin</span>
   </div>
   <div class="state" id="state" role="status" aria-live="polite">
     <svg viewBox="0 0 22 22" id="stateIcon"></svg>
@@ -222,14 +222,14 @@
   <pre class="card" id="fault"></pre>
 
   <section class="kpis" aria-label="Key figures">
-    <div class="tile hero"><div class="label">Bars packed</div><div class="value" id="kPacked">0</div><div class="note" id="kPackedNote">line not started</div></div>
+    <div class="tile hero"><div class="label" id="kPackedLabel">Bars packed</div><div class="value" id="kPacked">0</div><div class="note" id="kPackedNote">line not started</div></div>
     <div class="tile"><div class="label">Unpacked on the line</div><div class="value" id="kWip">0</div><div class="note" id="kWipNote">bars on conveyor A</div></div>
     <div class="tile"><div class="label">Rejected</div><div class="value" id="kRej">0</div><div class="note" id="kRejNote">rework 0 &middot; scrap 0</div></div>
     <div class="tile"><div class="label">Cartons filled</div><div class="value" id="kCart">0</div><div class="note" id="kCartNote">0 on conveyor B</div></div>
     <div class="tile"><div class="label">Pallets built</div><div class="value" id="kPal">0</div>
       <div class="meter" title="Cartons on the pallet being built"><i id="kPalBar"></i></div><div class="note" id="kPalNote">no pallet at the station</div></div>
     <div class="tile"><div class="label">Pallets shipped</div><div class="value" id="kShip">0</div><div class="note" id="kShipNote">AMR docked</div></div>
-    <div class="tile"><div class="label">Throughput</div><div class="value" id="kRate">0<small>bars/min</small></div><div class="note" id="kRateNote">packed, last 60 s</div></div>
+    <div class="tile"><div class="label">Throughput</div><div class="value" id="kRate">0<small id="kRateUnit">bars/min</small></div><div class="note" id="kRateNote">packed, last 60 s</div></div>
     <div class="tile"><div class="label">Inspection accuracy</div><div class="value" id="kAcc">&ndash;</div><div class="note" id="kAccNote">vs simulation ground truth</div></div>
   </section>
 
@@ -263,7 +263,7 @@
   </article>
 
   <article class="card span4">
-    <header><h2>Flow rate</h2><span class="sub">bars per minute, 60 s rolling</span>
+    <header><h2>Flow rate</h2><span class="sub" id="flowSub">bars per minute, 60 s rolling</span>
       <div class="right"><button class="btn small" id="trendToggle" aria-pressed="false">Table</button></div></header>
     <div class="keys" id="trendKeys"></div>
     <div class="plot" id="trend"><svg id="trendSvg" height="230"></svg><div class="tip" id="trendTip"></div></div>
@@ -302,6 +302,7 @@
 const $ = id => document.getElementById(id);
 const SVGNS = 'http://www.w3.org/2000/svg';
 let LAY = null, S = null, online = false;
+let NOUN = 'bar', TRUTH_SRC = 'the simulator';           // switched to tiles when real parts run
 let pinned = null, scanFilter = 'all', view = 'overview', trendTable = false, stopArmed = 0, lastScanKey = '', lastEventId = -1;
 
 // ---------------------------------------------------------------- vocabulary
@@ -363,7 +364,8 @@ function buildMimic() {
   let s = '';
   s += box(L.DOCK[0] - 0.75, L.DOCK[1] - 0.47, L.AMR_UNLOAD_X + 0.68, L.DOCK[1] + 0.47, 'lane', 6);
   s += `<circle cx="${X(L.IRB_BASE[0])}" cy="${Y(L.IRB_BASE[1])}" r="${L.IRB_R * K}" class="reach"/>`;
-  s += box(L.A_X0, L.A_Y - hw, L.A_X1, L.A_Y + hw, 'belt') + box(L.B_X1, L.B_Y - hw, L.B_X0, L.B_Y + hw, 'belt');
+  s += box(L.A_X0, L.A_Y - hw, L.A_X1, L.A_Y + hw, 'belt') + box(L.B_X1, L.B_Y - hw, L.B_SPLIT_X - 0.01, L.B_Y + hw, 'belt') +
+       box(L.B_SPLIT_X + 0.01, L.B_Y - hw, L.B_X0, L.B_Y + hw, 'belt');
   s += box(L.SHIP_X0, L.DOCK[1] - 0.25, L.SHIP_X1, L.DOCK[1] + 0.25, 'belt');
   for (const x of [-2.1, -0.75, 0.75]) s += arrow(x, L.A_Y, 1);
   for (const x of [0.6, -0.6, -2.0]) s += arrow(x, L.B_Y, -1);
@@ -396,7 +398,7 @@ function buildMimic() {
   s += tag(L.BIN_SCRAP[0] + 0.22, L.BIN_SCRAP[1] - 0.04, 'Scrap', null, 'start');
   svg.innerHTML = s;
   $('mimicLegend').innerHTML =
-    ['good', 'rework', 'scrap'].map(g => `<span class="chip">${glyph(g)}${GRADE[g]} bar</span>`).join('') +
+    ['good', 'rework', 'scrap'].map(g => `<span class="chip">${glyph(g)}${GRADE[g]} ${NOUN}</span>`).join('') +
     `<span class="chip">${glyph('none')}Not inspected yet</span>` +
     `<span class="chip" style="margin-left:auto">${glyph('active')}Working</span><span class="chip">${glyph('idle')}Waiting</span>` +
     `<span class="chip">${glyph('hold')}Cycle stop</span><span class="chip">${glyph('blocked')}Blocked</span>`;
@@ -483,11 +485,11 @@ function showScan(s) {
   if (!s) return;
   $('scanImg').src = `/scan/${s.id}.png`;
   $('scanVerdict').innerHTML = glyph(s.pred) + `<span>${GRADE[s.pred]}</span>`;
-  const rows = [['Bar', '#' + s.serial], ['Camera', s.cam === 'qc' ? 'QC gate (on the fly)' : 'Reject sorter (Baxter)'],
+  const rows = [[NOUN === 'tile' ? 'Tile' : 'Bar', '#' + s.serial], ['Camera', s.cam === 'qc' ? 'QC gate (on the fly)' : 'Reject sorter (Baxter)'],
     ['Confidence', (s.conf * 100).toFixed(1) + '%'], ['Graded by', s.source === 'cnn' ? 'Neural network' : 'Ground truth'], ['Sim time', clock(s.t)]];
   $('scanFacts').innerHTML = rows.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('');
   const f = $('scanFlag');
-  if (s.pred !== s.truth) { f.style.display = 'block'; f.innerHTML = glyph('alarm') + ` Misread: the simulator says this bar is <b>${GRADE[s.truth].toLowerCase()}</b>`; }
+  if (s.pred !== s.truth) { f.style.display = 'block'; f.innerHTML = glyph('alarm') + ` Misread: ${TRUTH_SRC} says this ${NOUN} is <b>${GRADE[s.truth].toLowerCase()}</b>`; }
   else f.style.display = 'none';
 }
 function drawScans(c) {
@@ -495,7 +497,7 @@ function drawScans(c) {
   if (key === lastScanKey) return;
   lastScanKey = key;
   const t = $('thumbs');
-  if (!list.length) { t.innerHTML = `<div class="empty">${c && c.scans.length ? 'No scans match this filter.' : 'Scans appear here once bars pass the cameras.'}</div>`; }
+  if (!list.length) { t.innerHTML = `<div class="empty">${c && c.scans.length ? 'No scans match this filter.' : `Scans appear here once ${NOUN}s pass the cameras.`}</div>`; }
   else {
     t.innerHTML = list.map(s => `<button class="thumb${s.pred !== s.truth ? ' misread' : ''}" data-id="${s.id}" aria-pressed="${pinned === s.id}" title="Bar #${s.serial}: ${GRADE[s.pred]} (${(s.conf * 100).toFixed(0)}%)">` +
       `<img loading="lazy" src="/scan/${s.id}.png" alt=""><span>${glyph(s.pred)}#${s.serial}</span></button>`).join('');
@@ -618,17 +620,36 @@ function drawBar(d) {
 }
 const UNITS = { feed_rate: v => v + ' /min', belt_speed: v => (+v).toFixed(2) + ' m/s', rework_pct: v => v + ' %', scrap_pct: v => v + ' %' };
 function drawControls(d) {
+  const fixedMix = !!(d.cell && d.cell.parts === 'tiles');
+  for (const k of ['rework_pct', 'scrap_pct']) $('c_' + k).disabled = fixedMix;
   for (const k in UNITS) { const el = $('c_' + k);
     if (document.activeElement !== el) { el.value = d.settings[k]; $('o_' + k).textContent = UNITS[k](d.settings[k]); } }
   for (const b of $('segLayers').children) b.setAttribute('aria-pressed', String(+b.dataset.v === d.settings.layers));
   for (const b of $('segMode').children) { b.setAttribute('aria-pressed', String(b.dataset.v === d.settings.mode)); if (b.dataset.v === 'cnn') b.disabled = !d.cnn_available; }
   const maxFeed = Math.floor(d.settings.belt_speed / 0.17 * 60);
-  $('ctlHint').textContent = (d.settings.feed_rate > maxFeed ? `At this belt speed the feeder tops out near ${maxFeed} bars/min (bars need 17 cm spacing for the camera). ` : '') +
-    'Rework and scrap shares describe the incoming supply. Pallet layers apply to the next empty pallet.';
+  $('ctlHint').textContent = (d.settings.feed_rate > maxFeed ? `At this belt speed the feeder tops out near ${maxFeed} ${NOUN}s/min (${NOUN}s need 17 cm spacing for the camera). ` : '') +
+    (fixedMix ? 'The real tile batch has a fixed mix, so the rework and scrap shares do not apply. '
+              : 'Rework and scrap shares describe the incoming supply. ') + 'Pallet layers apply to the next empty pallet.';
 }
 
 // --------------------------------------------------------------------- loop
+function setParts(d) {
+  const tiles = !!(d.cell && d.cell.parts === 'tiles');
+  if (tiles !== (NOUN === 'tile')) {
+    NOUN = tiles ? 'tile' : 'bar'; TRUTH_SRC = tiles ? 'the dataset label' : 'the simulator';
+    $('kPackedLabel').textContent = tiles ? 'Tiles packed' : 'Bars packed';
+    $('kRateUnit').textContent = NOUN + 's/min';
+    $('flowSub').textContent = NOUN + 's per minute, 60 s rolling';
+    $('kWipNote').textContent = NOUN + 's on conveyor A';
+    buildMimic(); lastScanKey = '';
+  }
+  if (tiles) {
+    const b = d.cell.batch, sorted = Object.values(b.outcome).reduce((x, y) => x + y, 0);
+    $('brandSub').textContent = `Real magnetic-tile photographs, never seen in training \u00b7 ${b.fed} / ${b.total} fed \u00b7 ${sorted} sorted`;
+  } else $('brandSub').textContent = 'Soap bars: inspect, pack, palletize, ship \u00b7 CoppeliaSim digital twin';
+}
 function render(d) {
+  setParts(d);
   drawBar(d); drawControls(d); drawStations(d); drawKpis(d);
   if (d.cell) drawMimic(d.cell);
   drawScans(d.cell); drawTrend(d.cell); drawEvents(d.cell);

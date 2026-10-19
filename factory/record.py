@@ -27,9 +27,10 @@ def main():
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--oracle', action='store_true')
     ap.add_argument('--seed', type=int, default=1)
+    ap.add_argument('--parts', choices=['bars', 'tiles'], default='bars')
     a = ap.parse_args()
 
-    cell = Cell(oracle=a.oracle, seed=a.seed)
+    cell = Cell(oracle=a.oracle, seed=a.seed, parts=a.parts)
     sim = cell.sim
     views = {n: sim.getObject('/View_' + n) for n in L.VIEWS}
     os.makedirs(a.out, exist_ok=True)
