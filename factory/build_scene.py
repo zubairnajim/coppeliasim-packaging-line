@@ -1,10 +1,14 @@
 """Builds the complete factory scene in the running CoppeliaSim instance and saves it.
 
-    python -m factory.build_scene
+    python -m factory.build_scene              # whole scene -> factory.ttt
+    python -m factory.build_scene --force      # also when another scene is open (it gets wiped)
+
+Run it with factory.ttt or a new, empty scene open in CoppeliaSim; anything else is refused.
 """
 import math
 import os
 import random
+import sys
 
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 
@@ -27,6 +31,24 @@ D2R = math.pi / 180
 UR_SEED = [90, 30, 90, -30, -90, 0]
 IRB_SEED = [0, 0, 0, 0, 90, 0]
 BAXTER_SEED = {'L': [-45, -40, 0, 80, 0, 50, 0], 'R': [45, -40, 0, 80, 0, 50, 0]}
+
+
+def same_file(a, b):
+    return bool(a) and os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def check_open_scene(sim, force=False):
+    """The builder wipes whatever scene is open, so it only runs on factory.ttt or on a new, empty scene.
+    sim.saveScene() does not rename the open scene: building over another project's scene would
+    leave that file's name on the window, and the next save from the GUI would overwrite it."""
+    path = sim.getStringParam(sim.stringparam_scene_path_and_name)
+    top = {sim.getObjectAlias(h) for h in sim.getObjectsInTree(sim.handle_scene, sim.handle_all, 2)}
+    if force or same_file(path, SCENE) or (not path and top <= KEEP | {'Floor'}):
+        return
+    what = path if path else 'an unsaved scene with %d objects' % len(sim.getObjectsInTree(sim.handle_scene))
+    sys.exit('CoppeliaSim has %s open and building would wipe it.\n'
+             'Open %s (File > Open scene...) or a new scene (File > New scene) and run again,\n'
+             'or pass --force to build over it anyway.' % (what, SCENE))
 
 
 class Builder:
@@ -407,10 +429,13 @@ class Builder:
 
 
 if __name__ == '__main__':
-    import sys
+    stages = [a for a in sys.argv[1:] if a != '--force']
     b = Builder()
-    b.build(sys.argv[1:] or None)
-    if len(sys.argv) == 1:
+    check_open_scene(b.sim, force='--force' in sys.argv)
+    b.build(stages or None)
+    if not stages:
         b.sim.saveScene(SCENE)
+        if not same_file(b.sim.getStringParam(b.sim.stringparam_scene_path_and_name), SCENE):
+            b.sim.loadScene(SCENE)         # so the window carries the name of the file it was saved to
         print('saved', SCENE)
     print('objects:', len(b.sim.getObjectsInTree(b.sim.handle_scene)))

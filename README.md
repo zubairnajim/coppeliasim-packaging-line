@@ -154,7 +154,7 @@ Other entry points:
 
 | Command | Purpose |
 |---|---|
-| `python -m factory.build_scene` | Rebuild the whole scene from code and save `factory.ttt` |
+| `python -m factory.build_scene` | Rebuild the whole scene from code and save `factory.ttt` (needs `factory.ttt` or a new, empty scene open; it refuses to wipe any other scene) |
 | `python -m factory.train_qc` | Collect a fresh image set from the cameras and retrain the network |
 | `python -I factory/real_data.py` | Download and convert the two real-defect datasets (about 77 MB) |
 | `python -m factory.real_world` | Run the real-defect benchmark (about 25 minutes on a laptop GPU) |
